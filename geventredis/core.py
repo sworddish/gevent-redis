@@ -4,6 +4,7 @@
 from cStringIO import StringIO
 from errno import EINTR
 from gevent.socket import socket, error
+from gevent import coros
 
 class RedisError(Exception):
     pass
@@ -13,6 +14,7 @@ class RedisSocket(socket):
     def __init__(self, *args, **kwargs):
         socket.__init__(self, *args, **kwargs)
         self._rbuf = StringIO()
+        self._semaphore = coros.Semaphore()
 
     def _read(self, size):
         buf = self._rbuf
@@ -91,50 +93,63 @@ class RedisSocket(socket):
             buf_write(data)
         return buf.getvalue()
 
-    def _read_response(self):
-        read = self._read
-        readline = self._readline
-        response = readline()
-        byte = ord(response[0])
-        if byte is 43: # ord('+')
-            return response[1:-2]
-        elif byte is 58: # ord(':')
-            return int(response[1:])
-        elif byte is 36: # ord('$')
-            number = int(response[1:])
-            if number == -1:
-                return None
-            else:
-                return read(number+2)[:-2]
-        elif byte is 42: # ord('*')
-            number = int(response[1:])
-            if number == -1:
-                return None
-            else:
-                result = []
-                result_append = result.append
-                while number:
-                    response = readline()
-                    byte = ord(response[0])
-                    if byte is 36: # ord('$')
-                        result_append(read(int(response[1:])+2)[:-2])
-                    else:
-                        if byte is 58: # ord(':')
-                            result_append(int(response[1:]))
-                        else:
-                            result_append(response[1:-2])
-                    number -= 1
-                return result
-        elif byte is 45: #ord('-')
-            return RedisError(response[1:-2])
+
+    ## Define the parsers for various messages we may receive
+    # +(message)
+    def _response_single_line(self, response):
+        return response[1:-2]
+        
+    # -(message)
+    def _response_error(self, response):
+        return RedisError(response[1:-2])
+    
+    # :nn
+    def _response_integer(self, response):
+        return int(response[1:])
+    
+    # $nn            length.  -1 = Null
+    # (binary data)
+    def _response_bulk(self, response):
+        number = int(response[1:])
+        if number == -1:
+            return None
         else:
-            raise RedisError('bulk cannot startswith %r' % byte)
+            return self._read(number+2)[:-2]
+
+    # *nn            length.  -1 = Null
+    # (any of the above messages)
+    def _response_multi_bulk(self, response):
+        number = int(response[1:])
+        if number == -1:
+            return none
+        else:
+            return [ self._read_response() for i in xrange(number) ]
+
+    ## Create a dict to parse each message
+    _response_dict = {
+        '+': _response_single_line,
+        '-': _response_error,
+        ':': _response_integer,
+        '$': _response_bulk,
+        '*': _response_multi_bulk,
+        }
+    
+    def _read_response(self):
+        response = self._readline()
+        try:
+            return self._response_dict[ response[0] ]( self, response )
+        except IndexError:
+            return RedisError('Did not understand response: %s' % response)
+    
 
     def _execute_command(self, *args):
         """Executes a redis command and return a result"""
         data = '*%d\r\n' % len(args) + ''.join(['$%d\r\n%s\r\n' % (len(str(x)), x) for x in args])
+        self._semaphore.acquire()
         self.send(data)
-        return self._read_response()
+        response = self._read_response()
+        self._semaphore.release()
+        return response
 
     def _execute_yield_command(self, *args):
         """Executes a redis command and yield multiple results"""
@@ -143,22 +158,3 @@ class RedisSocket(socket):
         while 1:
             yield self._read_response()
 
-    def _execute_command_1(self, arg1):
-        data = '*1\r\n$%d\r\n%s\r\n' % (len(arg1), arg1)
-        self.send(data)
-        return self._read_response()
-
-    def _execute_command_2(self, arg1, arg2):
-        data = '*2\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n' % (len(arg1), arg1, len(str(arg2)), arg2)
-        self.send(data)
-        return self._read_response()
-
-    def _execute_command_3(self, arg1, arg2, arg3):
-        data = '*3\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n' % (len(arg1), arg1, len(str(arg2)), arg2, len(str(arg3)), arg3)
-        self.send(data)
-        return self._read_response()
-
-    def _execute_command_4(self, arg1, arg2, arg3, arg4):
-        data = '*4\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n$%d\r\n%s\r\n' % (len(arg1), arg1, len(str(arg2)), arg2, len(str(arg3)), arg3, len(str(arg4)), arg4)
-        self.send(data)
-        return self._read_response()

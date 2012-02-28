@@ -101,7 +101,7 @@ class RedisSocket(socket):
         
     # -(message)
     def _response_error(self, response):
-        return RedisError(response[1:-2])
+        raise RedisError(response[1:-2])
     
     # :nn
     def _response_integer(self, response):
@@ -139,7 +139,7 @@ class RedisSocket(socket):
         try:
             return self._response_dict[ response[0] ]( self, response )
         except IndexError:
-            return RedisError('Did not understand response: %s' % response)
+            raise RedisError('Did not understand response: %s' % response)
     
 
     def _execute_command(self, *args):
@@ -147,8 +147,10 @@ class RedisSocket(socket):
         data = '*%d\r\n' % len(args) + ''.join(['$%d\r\n%s\r\n' % (len(str(x)), x) for x in args])
         self._semaphore.acquire()
         self.send(data)
-        response = self._read_response()
-        self._semaphore.release()
+        try:
+            response = self._read_response()
+        finally:
+            self._semaphore.release()
         return response
 
     def _execute_yield_command(self, *args):

@@ -135,8 +135,10 @@ def test():
         raise ValueError('substr failed')
         
     print( "ttl: %s" % redis_client.ttl('foo') )
-    if 'string' != redis_client.type('foo'):
-        raise ValueError('type failed')
+    
+    ret =  redis_client.type('foo')
+    if 'string' != ret:
+        raise ValueError('type failed.  Expected "string" got %s'%ret)
         
     ## Skip a lot
     
@@ -166,11 +168,34 @@ def test():
     x = redis_client.hset('hoo2', 'hoo2foo', 'hoo2bar')
     if ['hoo2bar'] != redis_client.hvals('hoo2'):
         raise ValueError('hvals failed')
+    
+    # try saving data with embedded \r\n
+    print("set with tough data: %s" % redis_client.set('foo', 'bar\r\nbar') )
+    ret = redis_client.get('foo')
+    if ret != 'bar\r\nbar':
+        raise ValueError('set/get failed with embedded termination')
+    
+    # try to break with spurious data
+    print("\ntest spurious data...")
+    try:
+        print("sending 'bad command!'")
+        ret = redis_client._execute_command('bad command!')
+    except geventredis.RedisError as e:
+        print("correctly caught bad command: %s" % e)
+    else:
+        raise ValueError('failed to catch bad command. Excpeted RedisError exception, got %s', ret)
         
-    print( "flushing all test data: %s" % redis_client.flushall() )
+    redis_client.send('PING\r\n')
+    gevent.sleep(0.1)
+    print( "set: %s" % redis_client.set('foo', 'bar') )
+    ret = redis_client.get('foo')
+    if ret != 'bar':
+        raise ValueError('get or set failed with spurious data.')
+    
+    print( "\nflushing all test data: %s" % redis_client.flushall() )
 
     
-    print "All tests passed."
+    print "\nAll tests passed."
 
 if __name__ == '__main__':
     test()

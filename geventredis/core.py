@@ -4,7 +4,7 @@
 from cStringIO import StringIO
 from errno import EINTR
 from gevent.socket import socket, error
-from gevent import coros
+from gevent import coros, select, spawn
 
 class RedisError(Exception):
     pass
@@ -15,84 +15,28 @@ class RedisSocket(socket):
         socket.__init__(self, *args, **kwargs)
         self._rbuf = StringIO()
         self._semaphore = coros.Semaphore()
+        spawn( self._drain )
 
     def _read(self, size):
-        buf = self._rbuf
-        buf.seek(0, 2)  # seek end
-        # Read until size bytes or EOF seen, whichever comes first
-        buf_len = buf.tell()
-        if buf_len >= size:
-            # Already have size bytes in our buffer?  Extract and return.
-            buf.seek(0)
-            rv = buf.read(size)
-            self._rbuf = StringIO()
-            self._rbuf.write(buf.read())
-            return rv
-
-        self._rbuf = StringIO()  # reset _rbuf.  we consume it via buf.
-        self_recv = self.recv
-        buf_write = buf.write
-        while True:
-            left = size - buf_len
-            try:
-                data = self_recv(left)
-            except error, e:
-                if e.args[0] == EINTR:
-                    continue
-                raise
-            if not data:
-                break
-            n = len(data)
-            if n == size and not buf_len:
-                return data
-            if n == left:
-                buf_write(data)
-                del data  # explicit free
-                break
-            assert n <= left, "recv(%d) returned %d bytes" % (left, n)
-            buf_write(data)
-            buf_len += n
-            del data  # explicit free
-            #assert buf_len == buf.tell()
-        return buf.getvalue()
-
+        return self.recv(size)
+    
     def _readline(self):
-        buf = self._rbuf
-        buf.seek(0, 2)  # seek end
-        if buf.tell() > 0:
-            # check if we already have it in our buffer
-            buf.seek(0)
-            bline = buf.readline()
-            if bline.endswith('\n'):
-                self._rbuf = StringIO()
-                self._rbuf.write(buf.read())
-                return bline
-            del bline
-        # Read until \n or EOF, whichever comes first
-        buf.seek(0, 2)  # seek end
-        self._rbuf = StringIO()  # reset _rbuf.  we consume it via buf.
-        self__rbuf_write = self._rbuf.write
-        self_recv = self.recv
-        buf_write = buf.write
+        '''Read the receive buffer one char at a time until we find \n, return sans the trailing \r\n'''
+        ret = []
         while True:
-            try:
-                data = self_recv(8192)
-            except error, e:
-                if e.args[0] == EINTR:
-                    continue
-                raise
-            if not data:
+            ret.append( self.recv(1) )
+            if ret[-1] == '\n':
                 break
-            nl = data.find('\n')
-            if nl >= 0:
-                nl += 1
-                buf_write(data[:nl])
-                self__rbuf_write(data[nl:])
-                del data
-                break
-            buf_write(data)
-        return buf.getvalue()
-
+        return ''.join( ret )
+        
+    def _drain(self):
+        '''Keep the socket clear when not expecting any callbacks'''
+        while True:
+            ready, w, x = select.select( [self], [], [] )
+            if not self._semaphore.locked():
+                '''We're here if there's data in the receive buffer but no one's reading'''
+                junk = self.recv(1)
+    
 
     ## Define the parsers for various messages we may receive
     # +(message)
@@ -156,7 +100,11 @@ class RedisSocket(socket):
     def _execute_yield_command(self, *args):
         """Executes a redis command and yield multiple results"""
         data = '*%d\r\n' % len(args) + ''.join(['$%d\r\n%s\r\n' % (len(str(x)), x) for x in args])
+        self._semaphore.acquire()
         self.send(data)
         while 1:
             yield self._read_response()
+            
+        #never gets here, but shown for completeness
+        self._semaphore.release()
 

@@ -17,6 +17,7 @@
 """Redis client implementations using gevent.socket"""
 
 import core
+RedisError = core.RedisError
 
 def connect(host='localhost', port=6379, timeout=None):
     """Create gevent Redis client.

@@ -36,6 +36,8 @@ class RedisSocket(socket):
             if not self._semaphore.locked():
                 '''We're here if there's data in the receive buffer but no one's reading'''
                 junk = self.recv(1)
+            else:
+                self._semaphore.wait()
     
 
     ## Define the parsers for various messages we may receive

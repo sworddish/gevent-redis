@@ -36,9 +36,10 @@ def test():
         return
     redis_client = geventredis.connect()
     x =  redis_client.info()
-    #for msg in redis_client.monitor():
-    #    print msg
-    #    break
+    for msg in redis_client.subscribe('my chan'):
+        print msg
+        break
+        
     print( "save: %s" % redis_client.save() )
     print( "bgsave: %s" % redis_client.bgsave() )
     x = redis_client.config_get()

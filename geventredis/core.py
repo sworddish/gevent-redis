@@ -21,7 +21,7 @@ class RedisSocket(socket):
         return self.recv(size)
     
     def _readline(self):
-        '''Read the receive buffer one char at a time until we find \n, return sans the trailing \r\n'''
+        '''Read the receive buffer until we find \n, return it all'''
         ret = []
         while True:
             ret.append( self.recv(1) )
@@ -34,9 +34,10 @@ class RedisSocket(socket):
         while True:
             ready, w, x = select.select( [self], [], [] )
             if not self._semaphore.locked():
-                '''We're here if there's data in the receive buffer but no one's reading'''
+                # We're here if there's data in the receive buffer but no one's reading
                 junk = self.recv(1)
             else:
+                # If someone else is reading, hang out until they're done
                 self._semaphore.wait()
     
 
@@ -99,14 +100,21 @@ class RedisSocket(socket):
             self._semaphore.release()
         return response
 
-    def _execute_yield_command(self, *args):
+    def _execute_yield_command(self, *args, **kwargs):
         """Executes a redis command and yield multiple results"""
         data = '*%d\r\n' % len(args) + ''.join(['$%d\r\n%s\r\n' % (len(str(x)), x) for x in args])
+        try:
+            cancel = kwargs['cancel']
+        except:
+            cancel = None
         self._semaphore.acquire()
         self.send(data)
-        while 1:
-            yield self._read_response()
-            
-        #never gets here, but shown for completeness
-        self._semaphore.release()
+        try:
+            while True:
+                yield self._read_response()
+        finally:
+            if cancel:
+                self.send( '%s\r\n' % cancel )
+                self._read_response()
+            self._semaphore.release()
 

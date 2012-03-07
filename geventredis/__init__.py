@@ -871,9 +871,9 @@ class RedisClient(core.RedisSocket):
         """Subscribe to all channels matching any pattern in ``patterns``"""
         if isinstance(patterns, basestring):
             patterns = [patterns]
-        return self._execute_yield_command('PSUBSCRIBE', *patterns)
+        return self._execute_yield_command('PSUBSCRIBE', *patterns, cancel='PUNSUBSCRIBE')
 
-    def punsubscribe(self, patterns):
+    def punsubscribe(self, patterns=[]):
         """
         Unsubscribe from any channel matching any pattern in ``patterns``.
         """
@@ -885,9 +885,9 @@ class RedisClient(core.RedisSocket):
         """Subscribe to all channels matching any pattern in ``patterns``"""
         if isinstance(patterns, basestring):
             patterns = [patterns]
-        return self._execute_yield_command('SUBSCRIBE', *patterns)
-
-    def unsubscribe(self, patterns):
+        return self._execute_yield_command('SUBSCRIBE', *patterns, cancel='UNSUBSCRIBE')
+    
+    def unsubscribe(self, patterns=[]):
         """
         Unsubscribe from any channel matching any pattern in ``patterns``.
         """
@@ -897,7 +897,8 @@ class RedisClient(core.RedisSocket):
 
     def monitor(self):
         """Monitor to all commands in redis server"""
-        return self._execute_yield_command('MONITOR')
+        return self._execute_yield_command('MONITOR', cancel='QUIT')
+        
 
 def test():
     redis_client = connect('127.0.0.1', 6379)

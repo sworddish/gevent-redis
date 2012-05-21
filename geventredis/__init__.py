@@ -131,6 +131,12 @@ class RedisClient(core.RedisSocket):
         """
         return self._execute_command('SAVE')
 
+    def select(self, index):
+        """
+        Select the DB having the specified zero-based numeric index.
+        """
+        return self._execute_command('SELECT', index)
+
     def shutdown(self):
         """Shutdown the server"""
         try:

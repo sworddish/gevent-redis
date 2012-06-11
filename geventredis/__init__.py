@@ -317,6 +317,9 @@ class RedisClient(core.RedisSocket):
     def type(self, name):
         """Returns the type of key ``name``"""
         return self._execute_command('TYPE', name)
+        
+    def bitcount(self,name,start,end):
+        return self._execute_command('BITCOUNT', name, start, end)
 
     def watch(self, *names):
         """
